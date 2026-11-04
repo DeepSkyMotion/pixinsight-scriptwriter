@@ -27,26 +27,38 @@ Run `python3 SKILL_DIR/scripts/psw.py config`. On Windows use `py` or `python`.
 
 **Config exists.** Note these values:
 - `menu_category`;
-- `publish.method`;
-- `publish.repo`;
+- `publish.method` and `publish.repo`;
 - `workspace`;
+- `optimize`;
 - the PixInsight repository URL.
 
-**Exit code 3 means no config yet.** Ask the user with AskUserQuestion, keeping each question short:
-1. **Author name** for copyright lines.
-2. **Menu category**: scripts appear under `Script > <category>`. Suggest the author name.
-3. **Publishing**:
-   - `git`: a public GitHub repo that the user's local git can push to. This is the most common choice.
-   - `browser`: the user is signed in to GitHub in Claude's built-in browser, but has no git credentials.
-   - `none`: build packages locally only.
-4. For `git`/`browser`: the **GitHub repo** `owner/name`. It must be **public**, because PixInsight downloads without authentication. If it doesn't exist yet, offer to create it: `gh repo create owner/name --public` when `gh` is available, otherwise with the user through the browser. Put an `updates.xri` in it. The first `package` run creates the file in the staged upload.
+**Exit code 3 means no config yet.** Read and follow `SKILL_DIR/reference/setup.md`. In a plugin install the same flow is also available as `/pixinsight-scriptwriter:setup`. Return to the user's request when setup is done.
 
-Then run:
-`psw.py init --author "<A>" --category "<C>" --method <m> [--repo owner/name] [--branch main]`
+Setup covers:
+- the author, menu category, publish method and repo questions;
+- creating an empty public repo, which is fine because the first publish creates `main` and `updates.xri`;
+- `psw.py init`;
+- `psw.py selftest`;
+- the one-time PixInsight steps: allow unsigned scripts and repositories under Edit > Preferences > Security, then add the repository URL under Resources > Updates > Manage Repositories.
 
-Tell the user the repository URL it prints, and how to add it once: **Resources > Updates > Manage Repositories > Add**.
+## Optimization parameter (`optimize`, default `lossless`)
 
-Unsigned scripts and repositories are blocked by default. The user must enable them once in **Edit > Preferences > Security**: *Allow execution of unsigned scripts* and *Allow unsigned repositories*. Code signing needs a PixInsight developer certificate, which this skill does not handle.
+When `optimize` is `lossless`, the default, every script must be as fast and light as possible **without losing anything**. That means identical output, identical behaviour and no removed features.
+
+**If a lossless optimization exists, applying it is mandatory, not optional.** The checklist is in `pjsr-guide.md` under "Lossless optimization".
+
+How each role enforces it:
+- **Spec writer:** adds a "Performance plan" section listing the planned lossless optimizations.
+- **Coder:** implements the optimized version.
+- **Reviewer:** reports any missed lossless optimization as MAJOR, and any "optimization" that changes output as BLOCKER.
+- **Tester:**
+  - every run records deterministic output fingerprints and the best-of-2 time on a 4096x3072 RGB frame;
+  - an optimization is proven lossless with `psw.py compare <Slug> <N>`, which needs `OUTPUT: IDENTICAL`;
+  - for a change request that is only an optimization, it also runs `--against-version <N-1>`.
+
+Trade-offs that would change the output (faster but slightly different results) are **never** made silently. Offer them to the user as an option.
+
+If `optimize` is `off`, skip the extra optimization pass. Still never write needlessly slow code.
 
 ## Team
 
@@ -64,6 +76,7 @@ Agents are named `pi-spec-writer`, `pi-coder`, `pi-reviewer`, `pi-tester` and `p
 Agents don't see this conversation, so every prompt must give them:
 - absolute paths: the spec, the version folder, `SKILL_DIR`;
 - the toolkit command `python3 SKILL_DIR/scripts/psw.py`;
+- the `optimize` value;
 - the facts they need.
 
 Spawn the reviewer and the tester **in parallel**.
@@ -102,6 +115,7 @@ Spawn the reviewer and the tester **in parallel**.
     - the menu path;
     - how to get it: **Resources > Updates > Check for Updates**, apply, restart PixInsight;
     - the tests passed, with key numbers;
+    - the time on a 4096x3072 RGB frame, and which lossless optimizations were applied;
     - limitations;
     - an invitation to request changes.
 
