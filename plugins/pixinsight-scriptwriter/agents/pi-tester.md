@@ -32,9 +32,14 @@ Steps:
    Never write to the user's files.
 5. Run `python3 SKILL_DIR/scripts/psw.py test <Slug> <N>`. It starts a separate PixInsight (`-n --automation-mode`) and never touches the user's open one. A run takes about 15-60 s. A missing result log means a parse or load error; the console output names the file and line.
 6. If a failure is in your harness, fix it and rerun. If it is a script bug, report it and leave the script alone.
+7. **Optimization proof.** Every run logs deterministic output `fingerprints` and `timings_ms` (best of 2 on a 4096x3072 RGB frame). Keep the synthetic images deterministic: never use `gauss()` or random values.
+   - If the lead says the round contained optimizations, or the coder optimized existing code, run `python3 SKILL_DIR/scripts/psw.py compare <Slug> <N>`. It compares the last two runs. Use `--against-version <N-1>` when this version is a pure optimization of the previous one.
+   - `OUTPUT: CHANGED` on an optimization is a BLOCKER. Report which fingerprints differ.
+   - Report the timing change as a percentage.
 
 Report:
 - PASS or FAIL;
 - every check with its measured numbers;
+- the 4096x3072 timing, and the compare result if one ran;
 - the console errors;
 - for each script bug: `file:line` if known, observed vs expected, and a suggested fix.

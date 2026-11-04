@@ -39,6 +39,8 @@ Check, in order:
    - sensible defaults and ranges;
    - tooltips;
    - clear errors for missing images or processes.
-5. **Performance:** full-image per-pixel JS loops that a process could replace.
+5. **Lossless optimization** (when `optimize` is `lossless`, the default). Walk the guide's "Lossless optimization" checklist against the code.
+   - Every applicable optimization that is missing is a **MAJOR** finding. Name the exact change.
+   - Any "optimization" that alters output or behaviour is a **BLOCKER**. Examples: lower precision, skipped channels, approximated math.
 
 Report findings most severe first. Give each one as `file:line`, the defect, a concrete failure scenario and a fix. Mark each one BLOCKER, MAJOR or MINOR. If the code is good, return an empty list. Do not pad.

@@ -24,6 +24,8 @@ Rules:
 - All user-facing text is English: labels, tooltips, help, console, `#feature-info`.
 - Verify every API or process parameter you are not certain about. Grep `<PixInsight install dir>/src/scripts`, read `<PixInsight install dir>/doc/pjsr/objects/...`, or run a headless probe. Resolve every "VERIFY:" in the spec.
 - Close temporary windows in `finally`. Make processing undo-friendly. Prefer processes over per-pixel JS loops.
+- **Lossless optimization is mandatory** when `optimize` is `lossless` (the default). Implement the spec's Performance plan, and apply every other item from the guide's "Lossless optimization" checklist that fits. Never trade output quality or features for speed. If you see a faster variant that changes the output, report it instead of applying it.
+- When you optimize already-working code in a fix round, run the test before and after, then `python3 SKILL_DIR/scripts/psw.py compare <Slug> <N>`. It must print `OUTPUT: IDENTICAL`. If it doesn't, revert that optimization.
 - When done, run the smoke test: `python3 SKILL_DIR/scripts/psw.py test <Slug> <N>`. Parse errors show as PixInsight console lines naming the file and line. Fix until `RESULT: PASS`. Up to 5 attempts; then stop and report.
 - Do not package or publish anything, and do not touch the repository mirror.
 
