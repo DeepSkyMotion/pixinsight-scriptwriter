@@ -16,11 +16,13 @@ function check( name, cond, detail )
 
 function makeSyntheticImage( id, w, h, channels )
 {
-   // Sky background + gaussian noise + a few stars + a soft nebula blob.
+   // Sky background + DETERMINISTIC pseudo-noise + a few stars + a soft nebula blob.
+   // Deterministic on purpose: identical input -> identical output, so the
+   // fingerprint below can prove that an optimization changed nothing.
    var win = new ImageWindow( w, h, channels, 32, true, channels > 1, id );
    var P = new PixelMath;
    P.expression =
-      "0.08 + 0.01*gauss() " +
+      "0.08 + 0.01*(0.5 + 0.5*sin(x()*12.9898 + y()*78.233)) " +
       "+ 0.25*exp(-((x()-0.5*w())^2+(y()-0.5*h())^2)/(2*(0.15*w())^2)) " +
       "+ 0.9*exp(-((x()-0.25*w())^2+(y()-0.3*h())^2)/4) " +
       "+ 0.7*exp(-((x()-0.7*w())^2+(y()-0.6*h())^2)/3) " +
@@ -31,6 +33,25 @@ function makeSyntheticImage( id, w, h, channels )
    P.executeOn( win.mainView );
    return win;
 }
+
+// Output fingerprint: per-channel statistics with 9 decimals. Two runs with
+// equal fingerprints produced the same image (to float precision).
+function fingerprint( image )
+{
+   var fp = [];
+   var saved = image.selectedChannel;
+   for ( var c = 0; c < image.numberOfChannels; ++c )
+   {
+      image.selectedChannel = c;
+      fp.push( [ image.mean(), image.median(), image.stdDev(), image.minimum(), image.maximum() ]
+                  .map( function( v ) { return v.toFixed( 9 ); } ).join( "/" ) );
+   }
+   image.resetSelections();
+   image.selectedChannel = saved;
+   return fp.join( " | " );
+}
+results.fingerprints = {};
+results.timings_ms = {};
 
 try
 {
@@ -54,9 +75,26 @@ try
              "median " + before.toFixed( 5 ) + " -> " + after.toFixed( 5 ) +
              ", " + (Date.now() - t0) + " ms, out=" + JSON.stringify( out ) );
       check( "result is finite on " + ch + "-channel image", isFinite( after ) );
+      results.fingerprints[ ch + "ch_512x384" ] = fingerprint( win.mainView.image );
       // SCRIPT-SPECIFIC CHECKS GO HERE (expected direction of change, ranges...).
       win.forceClose();
    } );
+
+   // 4. Performance on a realistic frame size (default parameters).
+   //    Compare timings_ms and fingerprints between runs before/after an optimization.
+   //    Best of 2 runs on fresh copies, so the first-run warm-up does not skew timings.
+   var best = Infinity;
+   for ( var run = 0; run < 2; ++run )
+   {
+      var big = makeSyntheticImage( "psw_perf_" + run, 4096, 3072, 3 );
+      var tb = Date.now();
+      PSWEngine.run( big.mainView, params );
+      best = Math.min( best, Date.now() - tb );
+      if ( run == 1 )
+         results.fingerprints[ "3ch_4096x3072" ] = fingerprint( big.mainView.image );
+      big.forceClose();
+   }
+   results.timings_ms[ "rgb_4096x3072" ] = best;
 }
 catch ( e )
 {
