@@ -42,6 +42,23 @@ More engine functions are fine, but `PSWEngine.run` stays the single entry point
 - Use `console.writeln/noteln/warningln/criticalln` for progress, and `console.abortEnabled = true` with checks of `console.abortRequested` in long loops.
 - Persist settings with `Settings.read/write( PSW_SETTINGS + "/key", DataType.X, value )`. The key includes the version, so versions don't clash.
 
+## Lossless optimization (mandatory when config `optimize` = `lossless`, the default)
+
+**Rule:** if the script can be made faster or lighter without changing its output or behaviour, do it. **Lossless** means the test fingerprints are IDENTICAL before and after (`psw.py compare`). An optimization that changes output is not lossless. It is a quality trade-off, and only the user may approve it.
+
+Checklist, in rough order of payoff:
+
+1. **Processes, not pixel loops.** One `PixelMath` or one native process call beats any JS loop over pixels by 10-100x and is multithreaded.
+2. **Merge passes.** Fold chained PixelMath steps into one expression. Use `symbols` for intermediates, and `iif()` instead of separate masked passes.
+3. **Compute once.** Hoist image statistics (median, MAD, mean) and expensive constants out of loops and repeated calls. Reuse them across channels when the math allows.
+4. **Bulk sample access.** If JS must touch pixels, use `image.getSamples(array, rect, channel)` / `setSamples` on whole rows or blocks with a `Float32Array`. Never call `sample()`/`setSample()` per pixel.
+5. **Fewer temporary images.** Reuse one scratch window instead of creating several. Never `show()` temporaries. Create them with `new ImageWindow(..., false)` sized exactly as needed, and close them in `finally`.
+6. **No history for scratch work.** Process temporaries with undo disabled: `view.beginProcess( UndoFlag.NoSwapFile )`, or `executeOn( view, false )` where swap/undo is not needed. Keep undo only on the user's target view.
+7. **Right data type.** Stay in 32-bit float. Don't convert to 64-bit unless precision demands it, which changes output and is not lossless by itself.
+8. **Quiet loops.** No `console.writeln` per pixel or row. Report progress every N rows, and call `processEvents()` sparingly.
+9. **Work on what's needed.** Process only the selected channel or region when the algorithm allows. Skip no-op steps, e.g. a parameter at its neutral value.
+10. **Cheaper equivalent math.** Use `x*x` instead of `x^2` in hot JS paths, multiply by a precomputed reciprocal instead of dividing, and use integer-free indexing. Only where results stay bit-identical or within float rounding that leaves the fingerprint unchanged.
+
 ## API reference on disk
 
 `<PixInsight install dir>` is the folder that holds `PixInsight.app` on macOS (usually `/Applications/PixInsight`). On Linux it is `/opt/PixInsight`; on Windows, `C:\Program Files\PixInsight`.
