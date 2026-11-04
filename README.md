@@ -14,6 +14,8 @@ You click **Resources > Updates > Check for Updates**, and the script appears un
 
 Every change you ask for becomes a new version next to the old ones (`Star Halo Reducer v1`, `v2`, ...), so you can compare them on the same image. When you approve a final version, it is released under its clean name and the old versions are retired.
 
+Scripts are also **optimized without losing anything**. If a script can run faster or lighter while producing exactly the same result, the team must do it. Every test run fingerprints the output, and an optimization only ships if the fingerprints before and after are identical. Faster-but-different variants are offered to you, never applied silently.
+
 ## How it works
 
 | Role | Model | What it does |
@@ -34,7 +36,8 @@ Every generated script follows one architecture: an engine file (processing), a 
 - [Claude Code](https://claude.com/claude-code), with access to Claude Opus for the lead.
 - **PixInsight 1.9.4 or newer** (the V8 JavaScript engine) on macOS, Linux or Windows.
 - **Python 3.8+** (standard library only) and **git**.
-- A **public GitHub repository** to serve your scripts. It can be empty. PixInsight downloads updates without authentication, so it must be public.
+- A **public GitHub repository** to serve your scripts. A brand-new empty repo is fine: the first published script creates the `main` branch and the `updates.xri` index. PixInsight downloads updates without authentication, so it must be public.
+- For the `git` publishing method, this machine must be able to `git push` to that repo, for example after `gh auth login` or with an SSH key.
 - In PixInsight, **Edit > Preferences > Security**, enable *Allow execution of unsigned scripts* and *Allow unsigned repositories*. Scripts are not code-signed, because that needs a PixInsight developer certificate.
 
 ## Install
@@ -63,17 +66,26 @@ cp -r pixinsight-scriptwriter/plugins/pixinsight-scriptwriter/skills/pixinsight-
 cp pixinsight-scriptwriter/plugins/pixinsight-scriptwriter/agents/pi-*.md ~/.claude/agents/
 ```
 
-Start a new Claude Code session afterwards.
+Start a new Claude Code session afterwards. The manual install has no start-of-session reminder: setup simply runs the first time you ask for a script.
 
-## First run
+## Setup
 
-Just ask for a script. On the first run the lead asks four short questions and saves the answers to `~/.config/pixinsight-scriptwriter/config.json`:
+With the plugin installed, Claude **offers to set it up** at the start of your next session. You can also run `/pixinsight-scriptwriter:setup` at any time. If you decline, the reminder stops; setup still runs automatically the first time you ask for a script.
+
+Setup:
+- checks your machine (Python, git, PixInsight);
+- asks four short questions;
+- creates or connects your GitHub repository;
+- runs a short self-test that launches PixInsight in the background;
+- tells you exactly what to click in PixInsight.
+
+Your answers are saved to `~/.config/pixinsight-scriptwriter/config.json`:
 
 - **Author name**, used in the copyright lines.
 - **Menu category**. Scripts appear under `Script > <category>`.
 - **Publishing method:**
   - `git`: push with your local git credentials. Most common.
-  - `browser`: upload through Claude's built-in browser, for when you are signed in to GitHub there but have no git credentials.
+  - `browser`: upload through the built-in browser pane of the **Claude desktop app**, for when you are signed in to GitHub there but have no git credentials. It does not work in the terminal CLI.
   - `none`: build packages locally only.
 - **GitHub repository**, as `owner/name`.
 
@@ -118,14 +130,17 @@ Each zip unpacks into `src/scripts/<Category>/<Script>/` inside your PixInsight 
 The agents drive `scripts/psw.py`, and you can use it directly too:
 
 ```
-psw.py init | config
+psw.py init | config | doctor | selftest
 psw.py new       <Slug> <N> --title "Title" [--from-prev]
 psw.py test      <Slug> <N>          # separate headless PixInsight, never your open one
+psw.py compare   <Slug> <N> [--against-version M]   # proves an optimization is lossless
 psw.py package   <Slug> <N> --title T --desc D
 psw.py finalize  <Slug> <N> --title T --desc D
 psw.py publish   <Slug> [--message M] # git method
 psw.py status    [<Slug>]
 ```
+
+The `optimize` setting in the config defaults to `lossless`. Set it to `off` to skip the extra optimization pass.
 
 ## Notes and limitations
 
