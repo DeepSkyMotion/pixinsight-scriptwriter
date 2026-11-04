@@ -1,0 +1,12 @@
+{
+  "name": "pixinsight-scriptwriter",
+  "version": "1.0.0",
+  "description": "Opus-led multi-agent team that writes, tests (in a real headless PixInsight) and publishes PixInsight PJSR scripts to your own GitHub update repository, with side-by-side versions until you approve a final one.",
+  "author": {
+    "name": "DeepSkyMotion"
+  },
+  "homepage": "https://github.com/DeepSkyMotion/pixinsight-scriptwriter",
+  "repository": "https://github.com/DeepSkyMotion/pixinsight-scriptwriter",
+  "license": "MIT",
+  "keywords": ["pixinsight", "astrophotography", "pjsr", "javascript", "scripts", "image-processing", "multi-agent"]
+}
