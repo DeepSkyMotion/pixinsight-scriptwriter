@@ -45,6 +45,9 @@ def load_config():
     for k in ("workspace", "mirror", "pixinsight_bin"):
         if c.get(k):
             c[k] = os.path.expanduser(c[k])
+    if os.environ.get("PSW_WORKSPACE_OVERRIDE"):
+        c["workspace"] = os.environ["PSW_WORKSPACE_OVERRIDE"]
+    c.setdefault("optimize", "lossless")
     return c
 
 
@@ -77,8 +80,10 @@ def cmd_init(a):
             "method": method,
             "repo": a.repo or "",
             "branch": a.branch,
+            "remote_url": a.remote or "",
         },
         "mirror": a.mirror or ("~/PixInsightScripts/%s_repo" % slug if method != "none" else ""),
+        "optimize": "lossless",
     }
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -256,18 +261,37 @@ def mirror_sync(c):
         os.makedirs(c["workspace"], exist_ok=True)
         return
     m = c["mirror"]
+    br = p["branch"]
     if not os.path.isdir(os.path.join(m, ".git")):
         os.makedirs(os.path.dirname(m) or ".", exist_ok=True)
-        r = subprocess.run(["git", "clone", "-q", "https://github.com/%s.git" % p["repo"], m],
-                           capture_output=True, text=True)
+        r = subprocess.run(["git", "clone", "-q", remote_url(c), m], capture_output=True, text=True)
         if r.returncode != 0:
-            die("cannot clone %s into %s: %s" % (p["repo"], m, r.stderr.strip()))
+            die("cannot clone %s into %s: %s" % (remote_url(c), m, r.stderr.strip()))
     git(c, "fetch", "-q", "origin")
+    remote_has_branch = bool(git(c, "ls-remote", "--heads", "origin", br).stdout.strip())
+    if not remote_has_branch:
+        # Brand-new empty repository (or new branch): start the branch locally.
+        # The first publish creates it on the remote.
+        has_commits = git(c, "rev-parse", "--verify", "-q", "HEAD", check=False).returncode == 0
+        if has_commits:
+            git(c, "checkout", "-q", "-B", br)
+        else:
+            git(c, "symbolic-ref", "HEAD", "refs/heads/" + br)
+        return
     if p["method"] == "browser":
-        git(c, "reset", "-q", "--hard", "origin/" + p["branch"])
+        git(c, "checkout", "-q", "-B", br, "origin/" + br)
+        git(c, "reset", "-q", "--hard", "origin/" + br)
     else:
-        git(c, "checkout", "-q", p["branch"])
-        git(c, "pull", "-q", "--ff-only", "origin", p["branch"])
+        if git(c, "rev-parse", "--verify", "-q", br, check=False).returncode == 0:
+            git(c, "checkout", "-q", br)
+        else:
+            git(c, "checkout", "-q", "-b", br, "origin/" + br)
+        git(c, "pull", "-q", "--ff-only", "origin", br)
+
+
+def remote_url(c):
+    p = c["publish"]
+    return p.get("remote_url") or "https://github.com/%s.git" % p["repo"]
 
 
 def xri_path(c):
@@ -457,14 +481,149 @@ def cmd_publish(a):
         shutil.copy(os.path.join(st, fn), os.path.join(c["mirror"], fn))
     git(c, "add", *files)
     msg = a.message or ("Update %s" % a.slug)
-    r = git(c, "commit", "-q", "-m", msg, check=False)
+    ident = []
+    if not git(c, "config", "user.email", check=False).stdout.strip():
+        # No git identity on this machine: sign the commit as the configured author.
+        handle = (p["repo"].split("/")[0] if p.get("repo") else re.sub(r"\W", "", c["author"])) or "author"
+        ident = ["-c", "user.name=" + c["author"], "-c", "user.email=%s@users.noreply.github.com" % handle]
+    r = subprocess.run(["git", "-C", c["mirror"]] + ident + ["commit", "-q", "-m", msg],
+                       capture_output=True, text=True)
     if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr):
-        die("git commit failed: " + r.stderr.strip())
-    r = git(c, "push", "-q", "origin", p["branch"], check=False)
+        die("git commit failed: " + (r.stderr or r.stdout).strip())
+    r = git(c, "push", "-q", "-u", "origin", p["branch"], check=False)
     if r.returncode != 0:
-        die("git push failed (credentials?): " + r.stderr.strip())
-    print("pushed:", files, "->", p["repo"], p["branch"])
+        die("git push failed. Check that this machine can push to %s (gh auth login, SSH key or "
+            "credential helper). git said: %s" % (remote_url(c), r.stderr.strip()))
+    print("pushed:", files, "->", p["repo"] or remote_url(c), p["branch"])
     print("verify:", [repo_raw_url(c) + f for f in files])
+
+
+# ---------------------------------------------------------------- onboarding helpers
+DECLINED_MARK = os.path.join(os.path.dirname(CONFIG_PATH), ".setup-declined")
+
+
+def which(cmd):
+    return shutil.which(cmd) or ""
+
+
+def cmd_doctor(a):
+    """Environment check for the setup flow. Prints JSON, never fails."""
+    out = {"config_path": CONFIG_PATH, "config_exists": os.path.exists(CONFIG_PATH),
+           "python": sys.version.split()[0], "git": which("git"), "gh": which("gh"),
+           "pixinsight_bin": "", "platform": platform.system()}
+    c = None
+    if out["config_exists"]:
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                c = json.load(f)
+        except Exception as e:
+            out["config_error"] = str(e)
+    pi = (c or {}).get("pixinsight_bin") or detect_pi()
+    out["pixinsight_bin"] = pi if pi and os.path.exists(pi) else ""
+    if out["gh"]:
+        r = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+        out["gh_authenticated"] = r.returncode == 0
+    if c and c.get("publish", {}).get("method") in ("git", "browser"):
+        url = c["publish"].get("remote_url") or "https://github.com/%s.git" % c["publish"]["repo"]
+        r = subprocess.run(["git", "ls-remote", url], capture_output=True, text=True, timeout=60)
+        out["repo_reachable"] = r.returncode == 0
+        out["repo_empty"] = r.returncode == 0 and not r.stdout.strip()
+        out["pixinsight_repository_url"] = repo_raw_url(c)
+    print(json.dumps(out, indent=2))
+
+
+def cmd_hook_session_start(a):
+    """SessionStart hook: nudge Claude to offer setup until configured or declined."""
+    try:
+        if os.path.exists(CONFIG_PATH) or os.path.exists(DECLINED_MARK):
+            return
+        msg = ("The pixinsight-scriptwriter plugin is installed but not configured yet. "
+               "At a natural moment early in this conversation, briefly tell the user (in their language) "
+               "that it is ready to set up and offer to do it now: they can say yes or run "
+               "/pixinsight-scriptwriter:setup. Offer once; do not interrupt an unrelated task. "
+               "If they decline for good, run: python3 \"%s\" decline-setup" % os.path.abspath(__file__))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                 "additionalContext": msg}}))
+    except Exception:
+        pass
+
+
+def _logs(c, slug, n):
+    d = os.path.join(vdir(c, slug, n), "test-logs")
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.path.join(d, f) for f in os.listdir(d) if re.fullmatch(r"\d{8}-\d{6}\.json", f))
+
+
+def cmd_compare(a):
+    """Prove an optimization is lossless: compare fingerprints/timings of two test runs."""
+    c = load_config()
+    if a.baseline:
+        base = a.baseline
+    elif a.against_version:
+        prev = _logs(c, a.slug, a.against_version)
+        if not prev:
+            die("no test logs for v%d" % a.against_version)
+        base = prev[-1]
+    else:
+        cur = _logs(c, a.slug, a.n)
+        if len(cur) < 2:
+            die("need two test runs of v%d (or --against-version / --baseline)" % a.n)
+        base = cur[-2]
+    cur = _logs(c, a.slug, a.n)
+    if not cur:
+        die("no test logs for v%d" % a.n)
+    new = cur[-1]
+    with open(base) as f:
+        b = json.load(f)
+    with open(new) as f:
+        n = json.load(f)
+    fb, fn = b.get("fingerprints", {}), n.get("fingerprints", {})
+    keys = sorted(set(fb) | set(fn))
+    same = bool(keys) and all(fb.get(k) == fn.get(k) for k in keys)
+    print("baseline:", base)
+    print("current: ", new)
+    for k in keys:
+        print("  %-16s %s" % (k, "IDENTICAL" if fb.get(k) == fn.get(k) else "DIFFERENT"))
+        if fb.get(k) != fn.get(k):
+            print("     before:", fb.get(k))
+            print("     after: ", fn.get(k))
+    for k in sorted(set(b.get("timings_ms", {})) | set(n.get("timings_ms", {}))):
+        tb, tn = b.get("timings_ms", {}).get(k), n.get("timings_ms", {}).get(k)
+        if tb and tn:
+            print("  time %-11s %d ms -> %d ms (%+.0f%%)" % (k, tb, tn, (tn - tb) * 100.0 / tb))
+    print("OUTPUT:", "IDENTICAL (lossless)" if same else "CHANGED")
+    sys.exit(0 if same else 2)
+
+
+def cmd_selftest(a):
+    """Scaffold a throwaway script in a temp workspace and run it in headless PixInsight."""
+    import tempfile
+    load_config()
+    tmp = tempfile.mkdtemp(prefix="psw-selftest-")
+    env = dict(os.environ, PSW_WORKSPACE_OVERRIDE=tmp)
+    me = [sys.executable, os.path.abspath(__file__)]
+    try:
+        r = subprocess.run(me + ["new", "PswSelfTest", "1", "--title", "PSW Self Test"],
+                           env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            die("scaffold failed: " + r.stderr.strip())
+        r = subprocess.run(me + ["test", "PswSelfTest", "1", "--timeout", str(a.timeout)],
+                           env=env, capture_output=True, text=True)
+        print(r.stdout[-3000:])
+        if r.returncode != 0:
+            print(r.stderr[-2000:])
+            die("SELFTEST FAILED: PixInsight could not run the template script headlessly.", 2)
+        print("SELFTEST PASSED: PixInsight runs scripts headlessly on this machine.")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_decline_setup(a):
+    os.makedirs(os.path.dirname(DECLINED_MARK), exist_ok=True)
+    with open(DECLINED_MARK, "w") as f:
+        f.write(datetime.datetime.now().isoformat() + "\n")
+    print("Setup reminders disabled. Remove %s to enable them again." % DECLINED_MARK)
 
 
 def cmd_status(a):
@@ -496,7 +655,14 @@ def main():
     p.add_argument("--method", choices=["git", "browser", "none"], default="git")
     p.add_argument("--workspace"); p.add_argument("--mirror"); p.add_argument("--pixinsight")
     p.add_argument("--pi-range", default="1.9.4:1.9.99"); p.add_argument("--force", action="store_true")
+    p.add_argument("--remote", help="git remote URL override, e.g. git@github.com:owner/repo.git")
     sp.add_parser("config")
+    sp.add_parser("doctor")
+    sp.add_parser("hook-session-start")
+    sp.add_parser("decline-setup")
+    p = sp.add_parser("selftest"); p.add_argument("--timeout", type=int, default=300)
+    p = sp.add_parser("compare"); p.add_argument("slug"); p.add_argument("n", type=int)
+    p.add_argument("--against-version", type=int); p.add_argument("--baseline")
     p = sp.add_parser("new"); p.add_argument("slug"); p.add_argument("n", type=int)
     p.add_argument("--title", required=True); p.add_argument("--from-prev", action="store_true")
     p = sp.add_parser("test"); p.add_argument("slug"); p.add_argument("n", type=int)
@@ -509,7 +675,8 @@ def main():
     a = ap.parse_args()
     {"init": cmd_init, "config": cmd_config, "new": cmd_new, "test": cmd_test,
      "package": cmd_package, "finalize": cmd_finalize, "publish": cmd_publish,
-     "status": cmd_status}[a.cmd](a)
+     "status": cmd_status, "doctor": cmd_doctor, "hook-session-start": cmd_hook_session_start,
+     "decline-setup": cmd_decline_setup, "selftest": cmd_selftest, "compare": cmd_compare}[a.cmd](a)
 
 
 if __name__ == "__main__":
