@@ -1,0 +1,14 @@
+{
+  "name": "deepskymotion",
+  "description": "Claude Code plugins for astrophotographers by DeepSkyMotion",
+  "owner": {
+    "name": "DeepSkyMotion"
+  },
+  "plugins": [
+    {
+      "name": "pixinsight-scriptwriter",
+      "source": "./plugins/pixinsight-scriptwriter",
+      "description": "Describe a PixInsight script in plain words; an Opus-led agent team specs, codes, reviews, tests it in a real headless PixInsight and publishes it to your GitHub update repository."
+    }
+  ]
+}
