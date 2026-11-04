@@ -1,0 +1,70 @@
+// ----------------------------------------------------------------------------
+// PixInsight JavaScript Runtime (PJSR 2.0, V8 engine)
+// ----------------------------------------------------------------------------
+// __SLUG___v__N__.js - __CATEGORY__ script
+// Version __N__ - Released __DATE__
+//
+// Copyright (c) __YEAR__ __AUTHOR__. All Rights Reserved.
+// ----------------------------------------------------------------------------
+//
+// TEMPLATE. Replace every __PLACEHOLDER__:
+//   __SLUG__   PascalCase English id, e.g. StarHaloReducer
+//   __TITLE__  human-readable English title, e.g. Star Halo Reducer
+//   __N__      version number (1, 2, 3 ...)
+//
+// Layout rules (see reference/pjsr-guide.md, "Architecture contract"):
+//   - all image math lives in __SLUG___v__N__Engine.js (no GUI objects there)
+//   - all dialogs live in __SLUG___v__N__GUI.js
+//   - main() is skipped when the test harness defines PSW_TEST_MODE
+// ----------------------------------------------------------------------------
+
+#engine v8
+
+#feature-id    __PREFIX_____SLUG___v__N__ : __CATEGORY__ > __TITLE__ v__N__
+
+#feature-info  __TITLE__ (version __N__).<br/>\
+   <br/>\
+   ONE-PARAGRAPH ENGLISH DESCRIPTION OF WHAT THE SCRIPT DOES.<br/>\
+   <br/>\
+   Copyright &copy; __YEAR__ __AUTHOR__
+
+#define PSW_TITLE    "__TITLE__ v__N__"
+#define PSW_VERSION  "__N__"
+#define PSW_SETTINGS "__CATDIR__/__SLUG___v__N__"
+
+// V8 engine: do NOT include pjsr .jsh constant headers (Sizer, StdButton,
+// NumericControl, DataType ...). They are built in and including them is a
+// "has already been declared" SyntaxError. Use StdButton.Ok, DataType.Double, etc.
+
+#include "__SLUG___v__N__Engine.js"
+#include "__SLUG___v__N__GUI.js"
+
+function main()
+{
+   console.show();
+   console.writeln( "<end><cbr><b>" + PSW_TITLE + "</b>" );
+
+   let params = new PSWParameters;
+   params.load();
+
+   let dialog = new PSWDialog( params );
+   if ( !dialog.execute() )
+      return;
+
+   params.save();
+
+   let window = ImageWindow.activeWindow;
+   if ( window.isNull )
+   {
+      (new MessageBox( "No active image.", PSW_TITLE, StdIcon.Error, StdButton.Ok )).execute();
+      return;
+   }
+
+   let t0 = Date.now();
+   PSWEngine.run( window.currentView, params );
+   console.noteln( format( "<end><cbr>" + PSW_TITLE + " done in %.2f s", (Date.now() - t0)/1000 ) );
+}
+
+#ifndef PSW_TEST_MODE
+main();
+#endif
