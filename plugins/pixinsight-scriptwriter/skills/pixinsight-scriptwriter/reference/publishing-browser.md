@@ -1,50 +1,55 @@
 # Publishing via Claude's built-in browser (method `browser`)
 
-Use this method when the user is signed in to GitHub in the built-in browser (`mcp__Claude_Browser__*` tools) but has no git push credentials on the machine. The local mirror (config `mirror`) is read-only. `psw.py` keeps it in sync with `git fetch` + `reset --hard`.
+Use this method when the user is signed in to GitHub in the built-in browser (`mcp__Claude_Browser__*` tools) but has no git push credentials on the machine. The local mirror (config `mirror`) is read-only; `psw.py` keeps it in sync with `git fetch` + `reset --hard`.
 
-Read `owner/name` and `branch` from `psw.py config`. Below, `REPO` = `owner/name` and `BR` = branch.
+Read `owner/name` and the branch from `psw.py config`. Below, `REPO` = `owner/name` and `BR` = branch. In two-stage configs (`targets`), use the **dev** repo for everything except an explicit release, which goes to the **release** repo (`--target release`).
 
-## Upload one release (zip + updated updates.xri) in a single commit
+**Why relay:** never paste file contents (base64 or text) into `javascript_exec`. That costs tokens proportional to the file size on every publish. `psw.py relay` serves the staged files from a one-shot local page that stores them in the tab's `window.name`. `window.name` survives navigating the **same tab** to github.com, so a short fixed snippet fills the upload form. File contents never pass through your context.
 
-`psw.py package|finalize` prints:
-- `upload_dir`, which holds exactly `<pkg>.zip` and `updates.xri`;
-- `zip_base64_file`.
+## Upload a staged release (zip + updated updates.xri) in one commit
 
-1. **Read the inputs.** Read the base64 file with the Read tool. Read `upload_dir/updates.xri` as text.
-2. **Open the upload page.** Navigate to `https://github.com/REPO/upload/BR` and wait for `input[type=file]`.
-3. **Put both files into the form.** Use `javascript_exec` with the real values pasted in:
+1. **Stage the files.** Run `psw.py package`, `release`, `finalize` or `retire`. Note the `sha1` it prints.
+2. **Start the relay** in the background, with Bash `run_in_background`:
+   `python3 SKILL_DIR/scripts/psw.py relay --slug <Slug> [--target release]`
+   Read its first output line, `RELAY READY: http://127.0.0.1:<port>/relay.html (...)`. The relay serves the page once and then exits, or exits after 10 minutes.
+3. **Load the relay page.** In one built-in browser tab, `navigate` to that URL. The tab title becomes `psw relay ready: N files`.
+4. **Open the upload page in the same tab:** `navigate` to `https://github.com/REPO/upload/BR`.
+5. **Fill the form.** Run this snippet with `javascript_exec` unchanged, setting only `MSG`:
    ```js
-   const zipB64 = "<BASE64>";
-   const xri = `<UPDATES.XRI TEXT>`;   // escape any backtick or ${ in the text
-   const zipBytes = Uint8Array.from(atob(zipB64), c => c.charCodeAt(0));
-   const dt = new DataTransfer();
-   dt.items.add(new File([zipBytes], "<PKG>.zip", {type: "application/zip"}));
-   dt.items.add(new File([xri], "updates.xri", {type: "application/xml"}));
+   const MSG = "Add <Title> vN";
+   const data = JSON.parse(window.name || '{}'); window.name = '';
+   if (!data.psw_relay) throw new Error('relay data missing: open the relay URL in THIS tab first');
+   await new Promise(r => setTimeout(r, 1000));
+   const dt = new DataTransfer(); const names = [];
+   for (const [p, b64] of Object.entries(data.files)) {
+     if (p.includes('/')) continue;                 // a staged release is flat
+     dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], p)); names.push(p);
+   }
    const input = document.querySelector('input[type=file]');
-   input.files = dt.files;
-   input.dispatchEvent(new Event('change', {bubbles: true}));
-   await new Promise(r => setTimeout(r, 4000));
-   ({listedZip: document.body.innerText.includes("<PKG>.zip"),
-     listedXri: document.body.innerText.includes("updates.xri")})
+   input.files = dt.files; input.dispatchEvent(new Event('change', {bubbles: true}));
+   await new Promise(r => setTimeout(r, 5000));
+   const s = document.querySelector('#commit-summary-input, input[placeholder="Add files via upload"]');
+   if (s) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(s, MSG); s.dispatchEvent(new Event('input', {bubbles: true})); }
+   const ok = names.length > 0 && names.every(n => document.body.innerText.includes(n));
+   if (ok) setTimeout(() => [...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Commit changes').click(), 300);
+   ({names, ok, messageSet: !!s})
    ```
-   An existing `updates.xri` is replaced, which is intended.
-4. **Set the commit message.** Put `Add <Title> vN` in the commit summary field with `form_input`.
-5. **Commit directly to the branch.** Keep the `commit-choice` radio on `direct` and click **Commit changes**. If a button is outside a narrow viewport, use `resize_window` to 1280x900, click, then reset with preset `desktop`.
-6. **Verify.** After ~5 s, run in Bash:
+   With `ok: true`, the commit goes directly to `BR`; GitHub preselects "Commit directly". With `ok: false`, take a screenshot and fix it by hand. Never retry blindly.
+6. **Verify.** After about 6 s, run in Bash:
    ```bash
-   curl -sSL "https://raw.githubusercontent.com/REPO/BR/<PKG>.zip?x=$RANDOM" | shasum -a 1   # must equal psw.py sha1
+   curl -sSL "https://raw.githubusercontent.com/REPO/BR/<PKG>.zip?x=$RANDOM" | shasum -a 1   # must equal the sha1 from step 1
    curl -sSL "https://raw.githubusercontent.com/REPO/BR/updates.xri?x=$RANDOM" | xmllint --noout -
    ```
-   raw.githubusercontent can serve a cached copy for a few minutes.
-7. **Sync the mirror:** run `psw.py status`.
+   raw.githubusercontent can serve a cached copy for a few minutes. Then run `psw.py status [--target ...]` to sync the mirror.
 
-A file that is new to the repo (not just updated) can also be created at `https://github.com/REPO/new/BR?filename=<path>&value=<urlencoded text>`.
+**Files in sub-folders.** Use `psw.py relay --path <dir> --root <dir>`. Then, for each folder `D`, open `https://github.com/REPO/upload/BR/D` in the same tab and run the snippet with the filter changed to keep only paths whose folder is `D`, using the base name as the file name. First store the data once with `sessionStorage.setItem('psw', window.name)`, because `window.name` is cleared after the first use.
 
 ## Deleting retired zips (only after explicit user approval)
 
-Open `https://github.com/REPO/delete/BR/<file>.zip`, then click "Commit changes..." followed by "Commit changes".
+Open `https://github.com/REPO/delete/BR/<file>.zip`, then click "Commit changes..." and then "Commit changes" in the dialog.
 
 ## Never
 
+- paste file contents into the browser by hand;
 - create tokens, change account settings, or sign the user out;
-- commit to another branch, except for a throwaway test branch that you delete afterwards.
+- commit to another branch, except a throwaway test branch you delete afterwards.
