@@ -21,15 +21,35 @@ Scripts are also **optimized without losing anything**. If a script can run fast
 | Role | Model | What it does |
 |---|---|---|
 | **Lead** | Claude Opus | Talks to you, names the script, judges complexity, orchestrates, publishes, reports |
-| `pi-spec-writer` | Sonnet | Request into spec: algorithm, parameters, GUI, edge cases, test plan |
-| `pi-coder` | Sonnet (Opus for complex scripts) | Implements the script and smoke-tests it in PixInsight |
-| `pi-reviewer` | Sonnet | Static review: PJSR API names, logic, UX, performance |
-| `pi-tester` | Sonnet | Writes real assertions and runs them in a headless PixInsight |
-| `pi-release-checker` | Haiku | Verifies the published zip (SHA1) and `updates.xri` |
+| `pixinsight-spec-writer` | Sonnet | Request into spec: algorithm, parameters, GUI, edge cases, test plan |
+| `pixinsight-coder` | Sonnet (Opus for complex scripts) | Implements the script and smoke-tests it in PixInsight |
+| `pixinsight-reviewer` | Sonnet | Static review: PJSR API names, logic, UX, performance |
+| `pixinsight-tester` | Sonnet | Writes real assertions and runs them in a headless PixInsight |
+| `pixinsight-release-checker` | Haiku | Verifies the published zip (SHA1) and `updates.xri` |
 
 Review and testing run in parallel. Findings go back to the coder for up to three fix rounds. A script that fails its tests is not published unless you say so.
 
+**Two paths.**
+- **Simple scripts** (one process or PixelMath with a few parameters) take a **fast path**: the lead writes a short spec itself, the coder implements it, and the tester checks it. That is about half the agent calls.
+- **Medium and complex scripts** take the **full path** above.
+
+**Mechanical checks cost nothing.** `psw.py lint` checks the PixInsight V8 hard rules (no `pjsr/*.jsh` includes, dot-style enums, the test-mode guard, no GUI in the engine, deterministic test data and more) without a model. The reviewer spends its tokens on logic and API questions instead.
+
+**It learns.** When a test exposes a new PixInsight quirk, the lead records it with `psw.py learn`. Learned rules live in your config folder, survive plugin updates, and every agent reads them before working.
+
 Every generated script follows one architecture: an engine file (processing), a GUI file (dialog) and a main file. That split is what lets the agents test the processing headlessly. The bundled [PJSR guide](plugins/pixinsight-scriptwriter/skills/pixinsight-scriptwriter/reference/pjsr-guide.md) captures V8-engine pitfalls found in real test runs. One example: including the old `pjsr/*.jsh` headers is now a syntax error.
+
+## Works alongside other plugins
+
+The plugin is written to coexist with whatever else you have installed: coding-style personas such as **ponytail**, terse-output modes, orchestrator, planner or "do" skills, memory plugins, and so on.
+
+- **Its rules win for the task.** The lead and every agent carry an explicit precedence block, so instructions injected by other plugins' hooks (also into subagents) cannot remove the architecture, the tests or the mandatory optimizations. They also cannot change the models or add extra agents.
+- **No stacked orchestration.** The lead never wraps the pipeline in another orchestrator and never hands steps to other plugins' agents.
+- **Explicit models.** Every agent call passes its model, so a global "default subagent model" setting cannot reshuffle the team.
+- **Unique names.** The agents are called `pixinsight-*`, so a manual install cannot collide with another plugin's agents.
+- **Hands off.** It never edits your other plugins or settings.
+
+Compatible advice from other plugins, like "write the smallest correct code", is simply followed.
 
 ## Requirements
 
@@ -63,7 +83,7 @@ claude plugin install pixinsight-scriptwriter@deepskymotion
 ```bash
 git clone https://github.com/DeepSkyMotion/pixinsight-scriptwriter.git
 cp -r pixinsight-scriptwriter/plugins/pixinsight-scriptwriter/skills/pixinsight-scriptwriter ~/.claude/skills/
-cp pixinsight-scriptwriter/plugins/pixinsight-scriptwriter/agents/pi-*.md ~/.claude/agents/
+cp pixinsight-scriptwriter/plugins/pixinsight-scriptwriter/agents/pixinsight-*.md ~/.claude/agents/
 ```
 
 Start a new Claude Code session afterwards. The manual install has no start-of-session reminder: setup simply runs the first time you ask for a script.
@@ -138,7 +158,18 @@ psw.py package   <Slug> <N> --title T --desc D
 psw.py finalize  <Slug> <N> --title T --desc D
 psw.py publish   <Slug> [--message M] # git method
 psw.py status    [<Slug>]
+psw.py lint      <Slug> <N>          # zero-token check of the hard rules
+psw.py learn "<rule>" | rules        # learned rules, kept across plugin updates
+psw.py relay --slug <Slug>           # browser method: upload without passing files through the model
+psw.py release <Slug> <N> | retire <Slug>   # optional two-stage mode (dev repo + release repo)
 ```
+
+### Optional: two-stage publishing
+
+If you share your scripts, you can develop in a separate test repository and publish to your public one only when you say so. Put a `targets` block in the config with a `dev` target and a `release` target. Each has its own `menu_category`, `id_prefix`, `publish` and `mirror`.
+- Every version goes to `dev`, under its own test submenu.
+- `psw.py release` rebuilds a chosen dev version for the public repo and re-tests that build in headless PixInsight before staging it.
+- `psw.py retire` cleans the dev versions out of PixInsight.
 
 The `optimize` setting in the config defaults to `lossless`. Set it to `off` to skip the extra optimization pass.
 
@@ -152,3 +183,20 @@ The `optimize` setting in the config defaults to `lossless`. Set it to `off` to 
 ## License
 
 [MIT](LICENSE)
+
+## Changelog
+
+- **1.2.0**
+  - Hardened against other plugins: a precedence block for the lead and all agents, no stacked orchestration, explicit models, unique `pixinsight-*` agent names.
+  - Fast path for simple scripts.
+  - `psw.py lint`, a zero-token hard-rule check.
+  - Learned rules (`learn` / `rules`).
+  - Browser publishing through `psw.py relay`: no file contents through the model.
+  - Fix rounds re-run only the tester.
+  - Optional two-stage dev/release publishing.
+- **1.1.0**
+  - Setup flow with a start-of-session offer and `/pixinsight-scriptwriter:setup`.
+  - Mandatory lossless optimization with deterministic fingerprints and `compare`.
+  - Empty-repository fix.
+- **1.0.0**
+  - First release.
