@@ -1,6 +1,6 @@
 {
   "name": "pixinsight-scriptwriter",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Opus-led multi-agent team that writes, tests (in a real headless PixInsight) and publishes PixInsight PJSR scripts to your own GitHub update repository, with side-by-side versions until you approve a final one.",
   "author": {
     "name": "DeepSkyMotion"
